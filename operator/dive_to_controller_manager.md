@@ -76,7 +76,9 @@ func ControllerManagedBy(m manager.Manager) *Builder {
 
 
 즉, kubebuilder가 생성한 위 [2번](#sec2)의 SetupWithManager의 실제 코드는 아래와 같음
-- Builder의 For, Watches, Completes를 수행
+- Builder의 For, Owns, Watches, Completes를 수행
+- `EnqueueRequestForOwner`는 source object에 event 발생 시 Owner에게 request를 enqueue함
+  - ReplicaSet이 Pod event 감지하면 reconcile 하는데, 이때 `source.Kind`는 Pod이고, `OwnerType`은 ReplicaSet임
 
 ```go
 func (r *CephClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -112,10 +114,15 @@ func (blder *Builder) Watches(src source.Source, eventhandler handler.EventHandl
 }
 ```
 
+- For, Owns 모두 controller가 watch하는 대상
+  - For는 Reconcile 대상
+  - Owns는 controller가 생성한 object 대상
+  - Watches는 아무 조건 없는 watch 함수로, For와 Owns 모두 Watches로 대체할 수 있음
+
 
 #### 4. Builder의 Complete 및 Build 함수
 
-For, Watches, Owns 함수 등을 호출한 후 최종적으로 Completes를 호출하여 위에서 정의된 controller를 빌드함
+For, Owns, Watches 함수 등을 호출한 후 최종적으로 Completes를 호출하여 위에서 정의된 controller를 빌드함
 
 ```go
 // controller-runtime/pkg/builder/controller.go
@@ -155,7 +162,7 @@ func (blder *Builder) Build(r reconcile.Reconciler) (controller.Controller, erro
 ```
 
 
-#### 5. Builder의 doController<a name="sec5"></a>
+#### 5. Builder의 doController 함수<a name="sec5"></a>
 
 Reconciler, concurrency, cache timeout 등이 별도로 설정되지 않다면 default로 설정하고 controller를 생성
 
@@ -190,7 +197,7 @@ import(
 var newController = controller.New
 ```
 
-#### 6. Controller의 New<a name="sec6"></a>
+#### 6. Controller의 New 함수<a name="sec6"></a>
 
 실제 controller를 생성하고 해당 controller를 controller manager에 등록
 - NewUnmanaged 함수를 통해 실제 controller를 생성
@@ -213,7 +220,7 @@ func New(name string, mgr manager.Manager, options Options) (Controller, error) 
 ```
 
 
-#### 7. Controller의 NewUnmanaged
+#### 7. Controller의 NewUnmanaged 함수
 
 실제 controller를 생성
 - Controller의 workqueue가 여기서 생성됨
@@ -243,7 +250,7 @@ func NewUnmanaged(name string, mgr manager.Manager, options Options) (Controller
 ```
 
 
-#### 8. Manager의 Add
+#### 8. Manager의 Add 함수
 
 [6번](#sec6)에서 NewUnmanaged 함수 호출 후에 호출하는 manager의 Add 함수는 아래와 같이 정의됨
 
@@ -329,10 +336,10 @@ func (cm *controllerManager) startRunnable(r Runnable) {
 }
 ```
 
-#### 9. Builder의 doWatch
+#### 9. Builder의 doWatch 함수
 
 [5번](#sec5)의 doController가 이렇게 다 끝나고 나면 doWatch를 수행
-doWatch를 통해 controller의 CR과 watch request를 날린 모든 input들에 대해 watch를 수행
+- doWatch를 통해 For, Owns, Watches를 호출한 모든 대상 object들에 Watch 
 
 ```
 // controller-runtime/pkg/builder/controller.go
@@ -390,7 +397,62 @@ func (blder *Builder) doWatch() error {
 }
 ```
 
-#### 13. Manager의 Start
+controller.Controller의 Watch 함수는 source.Source 타입인 src에 대한 cache를 생성하고 src의 Start 함수를 호출
+- [2번](#sec2)에서는 `&source.Kind{Type: &corev1.ConfigMap{}}` 등을 Watches 호출했었음 (src가 source.Kind)
+
+```go
+// controller-runtime/pkg/internal/controller/controller.go
+
+// Watch implements controller.Controller
+func (c *Controller) Watch(src source.Source, evthdler handler.EventHandler, prct ...predicate.Predicate) error {
+    ...
+    
+    return src.Start(c.ctx, evthdler, c.Queue, prct...)
+}
+```
+
+source.Kind의 Start 함수는 manager cache의 informer에 controller의 workqueue와 handler([2번](#sec2)에서 설정)를 등록함
+
+```go
+// controller-runtime/pkg/source/source.go
+
+// Start is internal and should be called only by the Controller to register an EventHandler with the Informer
+// to enqueue reconcile.Requests.
+func (ks *Kind) Start(ctx context.Context, handler handler.EventHandler, queue workqueue.RateLimitingInterface,
+    prct ...predicate.Predicate) error {
+    
+    ...
+
+    // cache.GetInformer will block until its context is cancelled if the cache was already started and it can not
+    // sync that informer (most commonly due to RBAC issues).
+    ctx, ks.startCancel = context.WithCancel(ctx)
+    ks.started = make(chan error)
+    go func() {
+        // Lookup the Informer from the Cache and add an EventHandler which populates the Queue
+        i, err := ks.cache.GetInformer(ctx, ks.Type)
+        if err != nil {
+            kindMatchErr := &meta.NoKindMatchError{}
+            if errors.As(err, &kindMatchErr) {
+                log.Error(err, "if kind is a CRD, it should be installed before calling Start",
+                    "kind", kindMatchErr.GroupKind)
+            }
+            ks.started <- err
+            return
+        }
+        i.AddEventHandler(internal.EventHandler{Queue: queue, EventHandler: handler, Predicates: prct})
+        if !ks.cache.WaitForCacheSync(ctx) {
+            // Would be great to return something more informative here
+            ks.started <- errors.New("cache did not sync")
+        }
+        close(ks.started)
+    }()
+
+    return nil
+}
+```
+
+
+#### 13. Manager의 Start 함수
 
 위와 같은 과정으로 controller 생성 및 Watch 설정까지 마친 후 [1번](#sec1)과 같이 manager Start를 하면 add한 controller를 아래와 같이 start시킴
 
