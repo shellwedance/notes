@@ -1,4 +1,8 @@
-1. kubebuilder가 자동으로 만들어주는 main 함수
+## How custom controllers created by Kubebuilder work
+
+#### 1. Kubebuilder가 자동으로 만들어주는 main 함수<a name="sec1"></a>
+
+아래는 Kubebuilder로 생성한 project인 HyperSDS-Operator의 main 함수
 
 ```go
 // hypersds-operator/main.go
@@ -11,10 +15,18 @@ if err = (&controllers.CephClusterReconciler{
 	setupLog.Error(err, "unable to create controller", "controller", "CephCluster")
 	os.Exit(1)
 }
+
+// +kubebuilder:scaffold:builder
+
+setupLog.Info("starting manager")
+if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	setupLog.Error(err, "problem running manager")
+	os.Exit(1)
+}
 ```
 
 
-2. kubebuilder가 자동으로 생성해주는 controller 코드
+#### 2. Kubebuilder가 자동으로 생성해주는 controller 코드<a name="sec2"></a>
 
 ```go
 // hypersds-operator/controller/cephcluster_controller.go
@@ -38,7 +50,7 @@ func (r *CephClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 ```
 
 
-3. NewControllerManagedBy 함수는 아래와 같이 alias 됨
+NewControllerManagedBy 함수는 아래와 같이 alias 됨
 
 ```go
 // controller-runtime/alias.go
@@ -48,7 +60,11 @@ NewControllerManagedBy = builder.ControllerManagedBy
 ```
 
 
-4. alias된 실체 builder의 ControllerManagedBy 함수는 ControllerManager의 관리를 받는 Builder 객체 포인터를 return
+#### 3. Builder 클래스
+
+Builder는 controller-runtime 패키지들을 wrapping하여 builder pattern으로 controller를 생성해주는 패키지
+
+[2번](#sec2)의 ControllerManagedBy 함수는 manager의 관리를 받는 builder 객체 주소를 return
 
 ```go
 // controller-runtime/pkg/builder/controller.go
@@ -59,32 +75,25 @@ func ControllerManagedBy(m manager.Manager) *Builder {
 ```
 
 
-- 즉, kubebuilder가 생성한 코드에서 실제 호출하는 코드는 아래와 같음
-
+즉, kubebuilder가 생성한 위 [2번](#sec2)의 SetupWithManager의 실제 코드는 아래와 같음
+- Builder의 For, Watches, Completes를 수행
 
 ```go
-return builder.ControllerManagedBy(mgr).
-	For(&hypersdsv1alpha1.CephCluster{}).
-	Watches(&source.Kind{Type: &corev1.ConfigMap{}},
-			&handler.EnqueueRequestForOwner{IsController: true, OwnerType: &hypersdsv1alpha1.CephCluster{}}).
-	Watches(&source.Kind{Type: &corev1.Pod{}},
-			&handler.EnqueueRequestForOwner{IsController: true, OwnerType: &hypersdsv1alpha1.CephCluster{}}).
-	...
-	Complete(&reconciler{
-		Client: mgr.GetClient(),
-		scheme: mgr.GetScheme(),
-	})
+func (r *CephClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return Builder(mgr).ControllerManagedBy(mgr).
+		For(&hypersdsv1alpha1.CephCluster{}).
+		Watches(&source.Kind{Type: &corev1.ConfigMap{}},
+				&handler.EnqueueRequestForOwner{IsController: true, OwnerType: &hypersdsv1alpha1.CephCluster{}}).
+		Watches(&source.Kind{Type: &corev1.Pod{}},
+				&handler.EnqueueRequestForOwner{IsController: true, OwnerType: &hypersdsv1alpha1.CephCluster{}}).
+		...
+		Complete(r)
 ```
 
 
-- Builder의 For, Watches, Completes를 수행
-
-
-
-5. builder에서 구현돼있는 Watches 함수 예시
-
-- Watch 할 input을 watch list에 append함. (나중에 doWatch라는 함수에서 watch list의 resource들을 watch함)
-
+아래는 Builder의 Watches 함수 예시
+- Watch 할 input을 watch list에 append
+- 나중에 호출하는 Completes 함수를 통해 이 watch list의 resource들에 Watch 호출
 
 ```go
 // controller-runtime/pkg/builder/controller.go
@@ -104,7 +113,9 @@ func (blder *Builder) Watches(src source.Source, eventhandler handler.EventHandl
 ```
 
 
-6. 최종적으로 불리는 Complete에서는 Build 함수를 호출하면서 controller를 완성
+#### 4. Builder의 Complete 및 Build 함수
+
+For, Watches, Owns 함수 등을 호출한 후 최종적으로 Completes를 호출하여 위에서 정의된 controller를 빌드함
 
 ```go
 // controller-runtime/pkg/builder/controller.go
@@ -117,7 +128,9 @@ func (blder *Builder) Complete(r reconcile.Reconciler) error {
 ```
 
 
-- Builder의 Build 함수에서는 doController 함수를 통해 실제 controller를 생성하고, doWatch를 통해 관리할 resource에 대한 Watch를 수행
+Builder의 Build 함수는 크게 두 함수를 통해 실제 controller를 빌드함
+- doController 함수를 통해 실제 controller를 생성
+- doWatch 함수를 통해 관리할 resource에 대한 Watch를 수행
 
 
 ```go
@@ -142,27 +155,16 @@ func (blder *Builder) Build(r reconcile.Reconciler) (controller.Controller, erro
 ```
 
 
-7. doController에서 resource의 GVK를 설정하고 새로운 controller를 생성
+#### 5. Builder의 doController<a name="sec5"></a>
 
-- 이 과정에서 MaxConcurrentReconciles 설정을 함.
-즉, 여기 넘기는 option의 MaxConcorrentReconciles를 설정하면 됨
+Reconciler, concurrency, cache timeout 등이 별도로 설정되지 않다면 default로 설정하고 controller를 생성
 
 
 ```go
 // controller-runtime/pkg/builder/controller.go
 
 func (blder *Builder) doController(r reconcile.Reconciler) error {
-    ...
-
-    // Setup concurrency.
-    if ctrlOptions.MaxConcurrentReconciles == 0 {
-        groupKind := gvk.GroupKind().String()
-
-        if concurrency, ok := globalOpts.GroupKindConcurrency[groupKind]; ok && concurrency > 0 {
-            ctrlOptions.MaxConcurrentReconciles = concurrency
-        }
-    }
-
+    // Setup concurrency, cache timeout, log
     ...
 	
     // Build the controller and return.
@@ -172,7 +174,7 @@ func (blder *Builder) doController(r reconcile.Reconciler) error {
 ```
 
 
-위의 newController는 위에서 alias돼있음
+위의 newController는 아래와 같이 alias돼있음
 
 
 ```go
@@ -184,11 +186,15 @@ import(
 )
 
 ...
+
 var newController = controller.New
 ```
 
-8. 실제 controller를 생성하는 함수인 NewUnmanaged를 호출
+#### 6. Controller의 New<a name="sec6"></a>
 
+실제 controller를 생성하고 해당 controller를 controller manager에 등록
+- NewUnmanaged 함수를 통해 실제 controller를 생성
+- Manager Add 함수를 통해 입력받은 manager에 해당 controller를 등록
 
 ```go
 // controller-runtime/pkg/controller/controller.go
@@ -207,7 +213,11 @@ func New(name string, mgr manager.Manager, options Options) (Controller, error) 
 ```
 
 
-9. 여기서 controller의 workqueue를 만드는 등 실제 controller를 생성
+#### 7. Controller의 NewUnmanaged
+
+실제 controller를 생성
+- Controller의 workqueue가 여기서 생성됨
+- 해당 controller의 최대 reconcile concurrency가 설정됨
 
 ```go
 // controller-runtime/pkg/controller/controller.go
@@ -233,8 +243,9 @@ func NewUnmanaged(name string, mgr manager.Manager, options Options) (Controller
 ```
 
 
-10. NewUnmanaged 함수로 controller를 생성하고 Manager의 Add 함수를 호출하는데, Manager의 Add 함수는 아래와 같음
+#### 8. Manager의 Add
 
+[6번](#sec6)에서 NewUnmanaged 함수 호출 후에 호출하는 manager의 Add 함수는 아래와 같이 정의됨
 
 ```go
 // controller-runtime/pkg/manager/manager.go
@@ -256,7 +267,8 @@ type Manager interface {
 ```
 
 
-Runnable은 Start라는 메소드를 가지는 Interface인데, controller가 이를 구현하고 있으므로 Add 함수를 통해 controller를 add할 수 있음
+Runnable은 Start라는 메소드를 가지는 Interface
+- Controller가 이를 구현하고 있으므로 Add 함수를 통해 manager에 controller를 add할 수 있음
 
 
 ```go
@@ -274,12 +286,11 @@ type Runnable interface {
 ```
 
 
-11. Add 함수에서는 controller를 start list에 추가해줌 (cm.startRunnable -> r.Start)
+Manager의 Add 함수에서는 controller를 start list에 추가해줌 
+- 이미 manager가 start된 경우 controller를 바로 start (cm.startRunnable -> r.Start)
 
-이미 manager가 start된 경우 controller를 바로 start해줌
-
-```
-(controller-runtime/pkg/manager/internal.go)
+```go
+// controller-runtime/pkg/manager/internal.go
 
 // Add sets dependencies on i, and adds it to the list of Runnables to start.
 func (cm *controllerManager) Add(r Runnable) error {
@@ -295,7 +306,8 @@ func (cm *controllerManager) Add(r Runnable) error {
         cm.caches = append(cm.caches, hasCache)
     } else {
         shouldStart = cm.startedLeader
-        cm.leaderElectionRunnables = append(cm.leaderElectionRunnables, r)
+        cm.leaderElectionRunnables = append(cm.lea
+	derElectionRunnables, r)
     }
 
     if shouldStart {
@@ -317,12 +329,13 @@ func (cm *controllerManager) startRunnable(r Runnable) {
 }
 ```
 
-12. 6번의 doController가 이렇게 다 끝나고 나면 doWatch를 수행
+#### 9. Builder의 doWatch
 
+[5번](#sec5)의 doController가 이렇게 다 끝나고 나면 doWatch를 수행
 doWatch를 통해 controller의 CR과 watch request를 날린 모든 input들에 대해 watch를 수행
 
 ```
-(controller-runtime/pkg/builder/controller.go)
+// controller-runtime/pkg/builder/controller.go
 
 func (blder *Builder) doWatch() error {
     // Reconcile type
@@ -377,10 +390,12 @@ func (blder *Builder) doWatch() error {
 }
 ```
 
-13. hypersds-operator에서 manager Start를 하면 add한 controller를 아래와 같이 start시킴
+#### 13. Manager의 Start
+
+위와 같은 과정으로 controller 생성 및 Watch 설정까지 마친 후 [1번](#sec1)과 같이 manager Start를 하면 add한 controller를 아래와 같이 start시킴
 
 ```
-(controller-runtime/pkg/manager/internal.go)
+// controller-runtime/pkg/manager/internal.go
 
 func (cm *controllerManager) Start(ctx context.Context) (err error) {
     if err := cm.Add(cm.cluster); err != nil {
