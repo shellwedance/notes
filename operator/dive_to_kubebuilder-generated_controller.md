@@ -40,6 +40,8 @@ NewManager 함수는 아래와 같이 alias 됨
 ```go
 // controller-runtime/alias.go
 
+...
+
 // NewManager returns a new Manager for creating Controllers.
 NewManager = manager.New
 ```
@@ -569,3 +571,8 @@ func (cm *controllerManager) Start(ctx context.Context) (err error) {
     }
 }
 ```
+
+## Reference
+
+https://ssup2.github.io/programming/Kubernetes_Kubebuilder/
+https://jishuin.proginn.com/p/763bfbd3012b
