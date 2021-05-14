@@ -1,6 +1,6 @@
-## How custom controllers created by Kubebuilder work
+# How custom controllers created by Kubebuilder work
 
-#### 1. Kubebuilder가 자동으로 만들어주는 main 함수<a name="sec1"></a>
+### 1. Kubebuilder가 자동으로 만들어주는 main 함수<a name="sec1"></a>
 
 아래는 Kubebuilder로 생성한 project인 HyperSDS-Operator의 main 함수
 - Manager를 생성하여 CephCluster controller를 등록하고 manager를 start함
@@ -72,7 +72,7 @@ func New(config *rest.Config, options Options) (Manager, error) {
 ```
 
 
-#### 2. Kubebuilder가 자동으로 생성해주는 controller 코드<a name="sec2"></a>
+### 2. Kubebuilder가 자동으로 생성해주는 controller 코드<a name="sec2"></a>
 
 ```go
 // hypersds-operator/controller/cephcluster_controller.go
@@ -108,7 +108,7 @@ NewControllerManagedBy = builder.ControllerManagedBy
 ```
 
 
-#### 3. Builder 클래스
+### 3. Builder 클래스
 
 Builder는 controller-runtime 패키지들을 wrapping하여 builder pattern으로 controller를 생성해주는 패키지
 
@@ -185,7 +185,7 @@ func (blder *Builder) Watches(src source.Source, eventhandler handler.EventHandl
   - Watches는 아무 조건 없는 watch 함수로, For와 Owns 모두 Watches로 대체할 수 있음
 
 
-#### 4. Builder의 Complete 및 Build 함수
+### 4. Builder의 Complete 및 Build 함수
 
 For, Owns, Watches 함수 등을 호출한 후 최종적으로 Completes를 호출하여 위에서 정의된 controller를 빌드함
 
@@ -227,7 +227,7 @@ func (blder *Builder) Build(r reconcile.Reconciler) (controller.Controller, erro
 ```
 
 
-#### 5. Builder의 doController 함수<a name="sec5"></a>
+### 5. Builder의 doController 함수<a name="sec5"></a>
 
 Reconciler, concurrency, cache timeout 등이 별도로 설정되지 않다면 default로 설정하고 controller를 생성
 
@@ -262,7 +262,7 @@ import(
 var newController = controller.New
 ```
 
-#### 6. Controller의 New 함수<a name="sec6"></a>
+### 6. Controller의 New 함수<a name="sec6"></a>
 
 실제 controller를 생성하고 해당 controller를 controller manager에 등록
 - NewUnmanaged 함수를 통해 실제 controller를 생성
@@ -285,7 +285,7 @@ func New(name string, mgr manager.Manager, options Options) (Controller, error) 
 ```
 
 
-#### 7. Controller의 NewUnmanaged 함수
+### 7. Controller의 NewUnmanaged 함수
 
 실제 controller를 생성
 - Controller의 workqueue가 여기서 생성됨
@@ -315,7 +315,7 @@ func NewUnmanaged(name string, mgr manager.Manager, options Options) (Controller
 ```
 
 
-#### 8. Manager의 Add 함수
+### 8. Manager의 Add 함수
 
 [6번](#sec6)에서 NewUnmanaged 함수 호출 후에 호출하는 manager의 Add 함수는 아래와 같이 정의됨
 
@@ -401,7 +401,7 @@ func (cm *controllerManager) startRunnable(r Runnable) {
 }
 ```
 
-#### 9. Builder의 doWatch 함수
+### 9. Builder의 doWatch 함수
 
 [5번](#sec5)의 doController가 이렇게 다 끝나고 나면 doWatch를 수행
 - doWatch를 통해 For, Owns, Watches를 호출한 모든 대상 object들에 Watch 
@@ -517,7 +517,7 @@ func (ks *Kind) Start(ctx context.Context, handler handler.EventHandler, queue w
 ```
 
 
-#### 13. Manager의 Start 함수
+### 10. Manager의 Start 함수
 
 위와 같은 과정으로 controller 생성 및 Watch 설정까지 마친 후 [1번](#sec1)과 같이 manager Start를 하면 add한 controller를 아래와 같이 start시킴
 
