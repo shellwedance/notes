@@ -522,7 +522,7 @@ func (ks *Kind) Start(ctx context.Context, handler handler.EventHandler, queue w
 
 위와 같은 과정으로 controller 생성 및 Watch 설정까지 마친 후 [1번](#sec1)과 같이 manager Start를 하면 add한 controller를 아래와 같이 start시킴
 
-```
+```go
 // controller-runtime/pkg/manager/internal.go
 
 func (cm *controllerManager) Start(ctx context.Context) (err error) {
@@ -572,8 +572,68 @@ func (cm *controllerManager) Start(ctx context.Context) (err error) {
 }
 ```
 
+Manager의 Start 함수를 타고 가면 controller.Controller의 Start 함수를 호출함
+
+### 11. Controller의 Start 함수
+
+Controller의 Start 함수에서는 workqueue에 request가 들어오기를 기다리다가 들어오면 처리함
+- MaxConcurrentReconciles 만큼 processNextWorkItem 함수를 수행하는 worker thread를 async로 띄움
+
+```go
+// controller-runtime/pkg/internal/controller/controller.go
+
+func (c *Controller) Start(ctx context.Context) error {
+    ...
+    err := func() error {
+	// Launch workers to process resources
+	c.Log.Info("Starting workers", "worker count", c.MaxConcurrentReconciles)
+	wg.Add(c.MaxConcurrentReconciles)
+	for i := 0; i < c.MaxConcurrentReconciles; i++ {
+	    go func() {
+		defer wg.Done()
+		// Run a worker thread that just dequeues items, processes them, and marks them done.
+		// It enforces that the reconcileHandler is never invoked concurrently with the same object.
+		for c.processNextWorkItem(ctx) {
+		}
+	    }()
+	}
+
+	c.Started = true
+	return nil
+    }()
+	
+    ...
+	
+    return nil
+}
+```
+
+processNextWorkItem 함수에서 reconcileHandler를 호출
+- Kubebuilder에서 생성한 Reconcile 함수에 object를 넘겨줌
+
+```go
+// controller-runtime/pkg/internal/controller/controller.go
+
+// processNextWorkItem will read a single work item off the workqueue and
+// attempt to process it, by calling the reconcileHandler.
+func (c *Controller) processNextWorkItem(ctx context.Context) bool {
+    obj, shutdown := c.Queue.Get()
+    if shutdown {
+        // Stop working
+        return false
+    }
+
+    ...
+
+    c.reconcileHandler(ctx, obj)
+    return true
+}
+```
+
 ## Reference
 
 https://ssup2.github.io/programming/Kubernetes_Kubebuilder/
 
 https://jishuin.proginn.com/p/763bfbd3012b
+
+https://juejin.cn/post/6858058420453539853
