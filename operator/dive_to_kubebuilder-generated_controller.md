@@ -13,6 +13,7 @@ Kubebuilder를 통해 생성된 코드에서 어떻게 controller가 작동하�
 
 ```go
 // hypersds-operator/main.go
+
 mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 	Scheme:             scheme,
 	MetricsBindAddress: metricsAddr,
