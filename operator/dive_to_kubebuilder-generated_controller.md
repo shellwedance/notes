@@ -3,9 +3,19 @@
 #### 1. Kubebuilder가 자동으로 만들어주는 main 함수<a name="sec1"></a>
 
 아래는 Kubebuilder로 생성한 project인 HyperSDS-Operator의 main 함수
+- Manager를 생성하여 CephCluster controller를 등록하고 manager를 start함
 
 ```go
 // hypersds-operator/main.go
+mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	Scheme:             scheme,
+	MetricsBindAddress: metricsAddr,
+	Port:               metricsPort,
+	LeaderElection:     enableLeaderElection,
+	LeaderElectionID:   "35b060ce.tmax.io",
+})
+
+...
 
 if err = (&controllers.CephClusterReconciler{
 	Client: mgr.GetClient(),
@@ -16,13 +26,49 @@ if err = (&controllers.CephClusterReconciler{
 	os.Exit(1)
 }
 
-// +kubebuilder:scaffold:builder
+...
 
 setupLog.Info("starting manager")
 if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 	setupLog.Error(err, "problem running manager")
 	os.Exit(1)
 }
+```
+
+NewManager 함수는 아래와 같이 alias 됨
+
+```go
+// controller-runtime/alias.go
+
+// NewManager returns a new Manager for creating Controllers.
+NewManager = manager.New
+```
+
+Manager의 New 함수는 아래와 같음
+- Cache, client 등 manager의 구성 요소들을 초기화하며 새로운 manager 생성
+
+```go
+// controller-runtime/pkg/manager/manager.go
+
+// New returns a new Manager for creating Controllers.
+func New(config *rest.Config, options Options) (Manager, error) {
+    // Set default values for options fields
+    options = setOptionsDefaults(options)
+
+    cluster, err := cluster.New(config, func(clusterOptions *cluster.Options) {
+        clusterOptions.Scheme = options.Scheme
+        clusterOptions.MapperProvider = options.MapperProvider
+        clusterOptions.Logger = options.Logger
+        clusterOptions.SyncPeriod = options.SyncPeriod
+        clusterOptions.Namespace = options.Namespace
+        clusterOptions.NewCache = options.NewCache
+        clusterOptions.NewClient = options.NewClient
+        clusterOptions.ClientDisableCacheFor = options.ClientDisableCacheFor
+        clusterOptions.DryRunClient = options.DryRunClient
+        clusterOptions.EventBroadcaster = options.EventBroadcaster
+    })
+    
+    ...
 ```
 
 
@@ -34,6 +80,8 @@ if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+...
 
 func (r *CephClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -63,6 +111,23 @@ NewControllerManagedBy = builder.ControllerManagedBy
 #### 3. Builder 클래스
 
 Builder는 controller-runtime 패키지들을 wrapping하여 builder pattern으로 controller를 생성해주는 패키지
+
+<a name="builder-class"></a>
+```go
+// controller-runtime/pkg/builder/controller.go
+
+// Builder builds a Controller.
+type Builder struct {
+    forInput         ForInput
+    ownsInput        []OwnsInput
+    watchesInput     []WatchesInput
+    mgr              manager.Manager
+    globalPredicates []predicate.Predicate
+    ctrl             controller.Controller
+    ctrlOptions      controller.Options
+    name             string
+}
+```
 
 [2번](#sec2)의 ControllerManagedBy 함수는 manager의 관리를 받는 builder 객체 주소를 return
 
@@ -94,8 +159,8 @@ func (r *CephClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 
 아래는 Builder의 Watches 함수 예시
-- Watch 할 input을 watch list에 append
-- 나중에 호출하는 Completes 함수를 통해 이 watch list의 resource들에 Watch 호출
+- Watch 할 input을 watchesInput list에 append ([Builder 클래스 참고](#builder-class))
+- 나중에 호출하는 Completes 함수를 통해 이 watchesInput list의 resource들에 Watch 호출
 
 ```go
 // controller-runtime/pkg/builder/controller.go
