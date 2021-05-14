@@ -3,6 +3,8 @@
 
 Kubebuilder를 통해 생성된 코드에서 어떻게 controller가 작동하고 이벤트 발생 시 reconcile을 수행하는지 code level에서 분석합니다.
 
+예제로는 Kubebuilder를 통해 생성한 [HyperSDS-Operator](https://www.github.com/tmax-cloud/hypersds-operator) 프로젝트를 사용합니다.
+
 
 ### 1. Kubebuilder가 자동으로 만들어주는 main 함수<a name="sec1"></a>
 
