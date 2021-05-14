@@ -378,8 +378,7 @@ func (cm *controllerManager) Add(r Runnable) error {
         cm.caches = append(cm.caches, hasCache)
     } else {
         shouldStart = cm.startedLeader
-        cm.leaderElectionRunnables = append(cm.lea
-	derElectionRunnables, r)
+        cm.leaderElectionRunnables = append(cm.leaderElectionRunnables, r)
     }
 
     if shouldStart {
