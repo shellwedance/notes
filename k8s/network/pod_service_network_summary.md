@@ -54,3 +54,7 @@ Pod은 언제든 지워질 수 있으므로 Pod 간의 통신에 있어서는 IP
 - coredns는 Deployment로 뜨며 모든 Pod의 DNS server로 작동
   - K8s bootstrap 시 kube-dns라는 Service가 생성됨
   - 모든 Pod들의 `/etc/resolve.conf`에는 nameserver의 endpoint로 kube-dns의 endpoint가 지정돼있음
+
+## Reference
+
+https://woohhan.tistory.com/9?category=390352
